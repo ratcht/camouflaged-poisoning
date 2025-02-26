@@ -1,0 +1,2 @@
+timestamp,gpu_util(%),memory_used(MB),memory_total(MB),memory_util(%),temperature(C)
+1740565077.4759753,0,4851.00,46068.00,10.53,40.0

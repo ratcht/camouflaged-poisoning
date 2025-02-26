@@ -2,39 +2,42 @@ import torch as t
 import torch.nn as nn
 from torchvision import models
 
-class ResNet34(nn.Module):
+class WideNet(nn.Module):
   def __init__(
     self,
-    n_blocks_per_group=[3, 4, 6, 3],
-    out_features_per_group=[64, 128, 256, 512],
-    first_strides_per_group=[1, 2, 2, 2],
+    depth=28,
+    width_factor=10,
+    in_features_per_group=[16, 160, 320],
+    out_features_per_group=[16, 32, 64],
+    first_strides_per_group=[1, 2, 2],
     n_classes=1000,
   ):
     super().__init__()
-    self.n_blocks_per_group = n_blocks_per_group
+    self.in_features_per_group = in_features_per_group
     self.out_features_per_group = out_features_per_group
     self.first_strides_per_group = first_strides_per_group
     self.n_classes = n_classes
 
+    self.N = (depth-4)//6
+    self.depth = depth
+    self.width_factor = width_factor
+
 
     self.conv_layers = nn.Sequential(
-      nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
-      nn.BatchNorm2d(64),
+      nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),
+      nn.BatchNorm2d(16),
       nn.ReLU(),
-      nn.MaxPool2d(3, stride=2),
     )
 
 
-    self.in_feats_per_group = [out_features_per_group[0], *self.out_features_per_group[:-1]]
-
-
     self.residual_layers = nn.Sequential(
-      *[BlockGroup(n_blocks_per_group[i], self.in_feats_per_group[i], out_features_per_group[i], first_stride=first_strides_per_group[i]) for i in range(0, len(self.n_blocks_per_group))],
+      *[BlockGroup(self.N, in_feats, out_feats * self.width_factor, first_stride)
+        for in_feats, out_feats, first_stride in zip(self.in_features_per_group, self.out_features_per_group, self.first_strides_per_group)],
     )
 
     self.out_layers = nn.Sequential(
       AveragePool(),
-      nn.Linear(in_features=out_features_per_group[-1], out_features=n_classes),
+      nn.Linear(in_features=out_features_per_group[-1] * self.width_factor, out_features=n_classes),
     )
 
   def forward(self, x: t.Tensor) -> t.Tensor:
@@ -91,7 +94,7 @@ class ResidualBlock(nn.Module):
     else:
       self.right_branch = nn.Sequential(
         nn.Conv2d(in_feats, out_feats, stride=first_stride, kernel_size=1, padding=0),
-        nn.BatchNorm2d(out_feats)
+        nn.BatchNorm2d(out_feats),
       )
     self.relu = nn.ReLU()
 
@@ -146,28 +149,3 @@ class AveragePool(nn.Module):
     Return: shape (batch, channels)
     """
     return t.mean(x, dim=(2, 3))
-
-
-def get_resnet_for_feature_extraction(n_classes: int, device: t.device, freeze: bool = True) -> ResNet34:
-  """
-  Creates a ResNet34 instance, replaces its final linear layer with a classifier for `n_classes` classes, and freezes
-  all weights except the ones in this layer.
-
-  Returns the ResNet model.
-  """
-  my_resnet = ResNet34()
-  
-  pretrained_resnet = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1).to(device)
-  my_resnet.copy_weights(pretrained_resnet)
-
-  print("Weights copied successfully!")
-
-  # Freeze conv base
-  
-  if freeze:
-    # Freeze conv base
-    my_resnet.requires_grad_(False)
-
-    my_resnet.out_layers[-1] = nn.Linear(my_resnet.out_features_per_group[-1], n_classes)
-
-  return my_resnet
